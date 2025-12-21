@@ -2,6 +2,8 @@
 
 我们将从以下这个简单代码入手，去探究go语言从编译到运行到程序结束发生的一系列故事，让我们探索go世界的奥妙！
 
+Go Version: 1.23.0
+
 ```go
 package main
 
@@ -22,7 +24,7 @@ func main() {
 }
 ```
 
-## 1. 程序启动
+## 1. 编译世界
 
 ### 编译阶段
 
@@ -315,3 +317,292 @@ grep -n "compile.*-p runtime " build_log.log
    # 第663行：移动到目标位置
    mv $WORK/b001/exe/a.out main_bin
    ```
+
+### 可执行文件结构(ELF)
+
+经过上一小节的探索，我们已经使用 `go build`命令将我们的 `main.go`代码编译成了机器可执行的文件 `main_bin`
+
+关于这个可执行文件结构的分析比较复杂，不在本文档的讨论范围中，可以参考[Go 可执行文件结构深度分析](./executable-structure-analysis.md)来进行深入研究
+
+不过我们可以简单通过几个命令来了解文件中包含了什么
+
+- 使用 `nm`命令查看符号表
+
+  ```bash
+  nm main_bin | grep -E "(rt0|main\.|runtime\.main|schedinit)"
+  ```
+  启动相关的符号：
+
+  ```text
+  0x46ce40  T  _rt0_amd64_linux      ← 程序入口 (Entry Point)
+  0x469740  T  _rt0_amd64            ← 平台无关入口
+  0x469760  T  runtime.rt0_go        ← Runtime 启动
+  0x4361e0  T  runtime.schedinit     ← 调度器初始化
+  0x434e60  T  runtime.main          ← Runtime main
+  0x48f080  T  main.main             ← 用户 main
+  ```
+  ```bash
+  nm main_bin | grep -E "runtime\.(g0|m0|allp)"
+  ```
+  全局变量相关符号：
+
+  ```text
+  0x552c80  B  runtime.g0      ← 主线程的 g0
+  0x5538e0  B  runtime.m0      ← 主线程 M
+  0x5726e0  B  runtime.allp    ← 所有 P 的数组
+  ```
+- 执行流程
+
+  ```text
+  文件结构                        运行时
+  ─────────────────────────────────────────
+  .text (0x401000)
+  ├─ 0x46ce40: _rt0_amd64_linux  → Entry Point
+  │                                  ↓
+  ├─ 0x469740: _rt0_amd64        → 设置 argc, argv
+  │                                  ↓
+  ├─ 0x469760: runtime.rt0_go    → g0, m0 初始化
+  │                                  ↓
+  ├─ 0x4361e0: runtime.schedinit → 调度器初始化
+  │                                  ↓
+  └─ 0x434e60: runtime.main      → runtime.main
+  									↓
+  								main.main (0x48f080)
+  ```
+
+## 2. 世界开始前的工作
+
+这一节我们讨论在用户代码执行前，Go语言的“世界初始化”操作，其中`runtime.main`的启动是用户`main`函数启动之前的关键。本节包含大量的汇编代码
+
+**世界开始前启动链路**
+
+```text
+Linux Loader
+    ↓
+0x46ce40: _rt0_amd64_linux
+    ↓ (jmp)
+0x469740: _rt0_amd64
+    ├─ 设置 argc, argv
+    ↓ (jmp)
+0x469760: runtime.rt0_go
+    ├─ 初始化 g0 栈
+    ├─ CPUID 检测
+    ├─ 设置 TLS
+    ├─ 连接 g0 ↔ m0
+    ├─ call runtime.check
+    ├─ call runtime.args
+    ├─ call runtime.osinit
+    ├─ call runtime.schedinit     ← 调度器初始化
+    ├─ call runtime.newproc       ← 创建 main goroutine
+    └─ call runtime.mstart        ← 启动调度（永不返回）
+```
+
+接下来可以使用两种方法来查看启动前的汇编代码，**反汇编可执行文件**和**查看go语言的源码**，我们来分别查看下
+
+### 反汇编`main_bin`
+
+从上一章节我们知道了程序的入口地址是：0x46ce40  T  _rt0_amd64_linux，我们可以使用反汇编指令`objdump`来一步步查看代码的执行情况
+
+#### _rt0_amd64_linux: 程序入口
+```bash
+objdump -d main_bin --start-address=0x46ce40 --stop-address=0x46ce50 -M intel
+```
+
+输出结果如下：
+```asm
+main_bin:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+000000000046ce40 <_rt0_amd64_linux>:
+  46ce40:       e9 fb c8 ff ff          jmp    469740 <_rt0_amd64>
+  46ce45:       cc                      int3   
+  46ce46:       cc                      int3   
+  46ce47:       cc                      int3   
+  46ce48:       cc                      int3   
+  46ce49:       cc                      int3   
+  46ce4a:       cc                      int3   
+  46ce4b:       cc                      int3   
+  46ce4c:       cc                      int3   
+  46ce4d:       cc                      int3   
+  46ce4e:       cc                      int3   
+  46ce4f:       cc                      int3   
+```
+
+可以看到指令只有简单的一条jump，于是根据jump的地址我们可以继续使用`objdump`来追踪代码
+
+#### _rt0_amd64: 设置参数
+```bash
+objdump -d main_bin --start-address=0x469740 --stop-address=0x469750 -M intel
+```
+
+输出如下：
+```asm
+main_bin:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000469740 <_rt0_amd64>:
+  469740:       48 8b 3c 24             mov    rdi,QWORD PTR [rsp]
+  469744:       48 8d 74 24 08          lea    rsi,[rsp+0x8]
+  469749:       e9 12 00 00 00          jmp    469760 <runtime.rt0_go.abi0>
+  46974e:       cc                      int3   
+  46974f:       cc                      int3   
+```
+
+这段汇编指令做了三件事：
+1. 从栈上读取`argc`到`rdi`寄存器
+2. 获取`argv`地址到`rsi`寄存器
+3. 跳转到`runtime.rt0_go`指令
+
+我们继续执行`objdump`
+
+#### runtime.rt0_go: 核心初始化
+
+```bash
+objdump -d main_bin --start-address=0x469760 --stop-address=0x469890 -M intel
+```
+
+关键部分输出：
+```asm
+0000000000469760 <runtime.rt0_go.abi0>:
+  ; 保存 argc 和 argv
+  469760:	48 89 f8             	mov    rax,rdi                    # 保存 argc
+  469763:	48 89 f3             	mov    rbx,rsi                    # 保存 argv
+  469766:	48 83 ec 28          	sub    rsp,0x28                   # 分配栈空间
+  46976a:	48 83 e4 f0          	and    rsp,0xfffffffffffffff0     # 对齐栈到 16 字节
+
+  ; 初始化 g0 栈
+  469778:	48 8d 3d 01 95 0e 00 	lea    rdi,[rip+0xe9501]          # rdi = &runtime.g0 (0x552c80)
+  46977f:	48 8d 9c 24 00 00 ff ff lea    rbx,[rsp-0x10000]          # rbx = 栈底
+  469787:	48 89 5f 10          	mov    QWORD PTR [rdi+0x10],rbx   # g0.stackguard0 = 栈底
+  46978b:	48 89 5f 18          	mov    QWORD PTR [rdi+0x18],rbx   # g0.stackguard1 = 栈底
+  46978f:	48 89 1f             	mov    QWORD PTR [rdi],rbx        # g0.stack.lo = 栈底
+  469792:	48 89 67 08          	mov    QWORD PTR [rdi+0x8],rsp    # g0.stack.hi = 栈顶
+
+  ; CPUID 检测（省略）
+  469796:	b8 00 00 00 00       	mov    eax,0x0
+  46979b:	0f a2                	cpuid
+
+  ; 设置 TLS（Thread Local Storage）
+  469812:	e8 a9 3e 00 00       	call   46d6c0 <runtime.settls>
+
+  ; 连接 g0 和 m0
+  469838:	48 8d 0d 41 94 0e 00 	lea    rcx,[rip+0xe9441]          # rcx = &runtime.g0
+  46983f:	64 48 89 0c 25 f8 ff ff ff mov QWORD PTR fs:0xfffffffffffffff8,rcx  # TLS 设置为 g0
+  469848:	48 8d 05 91 a0 0e 00 	lea    rax,[rip+0xea091]          # rax = &runtime.m0
+  46984f:	48 89 08             	mov    QWORD PTR [rax],rcx        # m0.g0 = &g0
+  469852:	48 89 41 30          	mov    QWORD PTR [rcx+0x30],rax   # g0.m = &m0
+
+  ; Runtime 初始化函数调用链
+  469856:	fc                   	cld
+  469857:	e8 64 46 00 00       	call   46dec0 <runtime.check>          # 运行时检查
+  46986d:	e8 0e 46 00 00       	call   46de80 <runtime.args>           # 处理命令行参数
+  469872:	e8 29 44 00 00       	call   46dca0 <runtime.osinit>         # OS 初始化
+  469877:	e8 64 45 00 00       	call   46dde0 <runtime.schedinit>      # 调度器初始化
+
+  ; 创建 main goroutine
+  46987c:	48 8d 05 1d a8 06 00 	lea    rax,[rip+0x6a81d]          # rax = runtime.mainPC
+  469883:	50                   	push   rax
+  469884:	e8 b7 45 00 00       	call   46de40 <runtime.newproc>        # 创建 main goroutine
+
+  ; 启动调度器（永不返回）
+  46988a:	e8 71 00 00 00       	call   469900 <runtime.mstart>         # 启动 M
+  46988f:	e8 2c 1e 00 00       	call   46b6c0 <runtime.abort>          # 不应该到达这里
+```
+
+### 查看go源码
+
+我们的源码目录: /root/rem/go-master/src
+本小节的所有命令操作都是默认在此目录下进行的
+
+**Tips: 善用`grep -rn "pattern" path`和`sed -n 'line1,line2p' file`来查找源码**
+
+首先我们查看程序启动的汇编文件`rt0_linux_amd64`
+```bash
+find ./ -name "rt0_linux_amd64*" 
+
+# 输出 ./runtime/rt0_linux_amd64.s
+# 使用cat 命令查看汇编代码
+cat ./runtime/rt0_linux_amd64.s
+```
+
+可以看到代码里有两个启动函数：
+```asm
+#include "textflag.h"
+
+TEXT _rt0_amd64_linux(SB),NOSPLIT,$-8
+	JMP     _rt0_amd64(SB)
+
+TEXT _rt0_amd64_linux_lib(SB),NOSPLIT,$0
+	JMP     _rt0_amd64_lib(SB)
+```
+
+根据我们之前反汇编得到信息，我们知道代码的启动函数是`_rt0_amd64_linux`，于是我们接着查找`_rt0_amd64(SB)`函数的定义
+
+```bash
+grep -rn "TEXT _rt0_amd64(SB)" ./
+
+# ./runtime/asm_amd64.s:15:TEXT _rt0_amd64(SB),NOSPLIT,$-8
+
+# 查看指定行
+sed -n '15,30p' ./runtime/asm_amd64.s
+```
+
+得到汇编代码
+```asm
+TEXT _rt0_amd64(SB),NOSPLIT,$-8
+	MOVQ    0(SP), DI       // argc
+	LEAQ    8(SP), SI       // argv
+	JMP     runtime·rt0_go(SB)
+```
+
+同理，接着查看`runtime·rt0_go(SB)`代码定义，关于这个汇编函数的具体阅读这里就不放出来，下面简单介绍下这个函数的功能：
+```text
+  runtime·rt0_go
+      │
+      ├─ 1️⃣ 保存 argc, argv
+      │   └─ 对齐栈到 16 字节
+      │
+      ├─ 2️⃣ 初始化 g0 栈⭐
+      │   ├─ g0.stack.lo = SP - 64KB
+      │   ├─ g0.stack.hi = SP         
+      │   └─ g0.stackguard0/1 = SP - 64KB
+      │
+      ├─ 3️⃣ CPU 特性检测
+      │   ├─ CPUID 检测 Intel/AMD
+      │   └─ 保存 CPU 版本信息
+      │
+      ├─ 4️⃣ CGO 初始化
+      │   └─ 调用 _cgo_init
+      │
+      ├─ 5️⃣ 设置 TLS
+      │   ├─ 调用 runtime·settls
+      │   └─ 测试 TLS 是否工作
+      │
+      ├─ 6️⃣ 连接 g0 ↔ m0
+      │   ├─ m0.g0 = &g0
+      │   ├─ g0.m = &m0
+      │   └─ TLS.g = g0
+      │
+      ├─ 7️⃣ CPU 微架构检查
+      │   └─ 检查 GOAMD64 要求的特性
+      │
+      ├─ 8️⃣ Runtime 初始化
+      │   ├─ runtime·check()      // 一致性检查
+      │   ├─ runtime·args()       // 命令行参数
+      │   ├─ runtime·osinit()     // OS 初始化
+      │   └─ runtime·schedinit()  // 调度器初始化 ⭐⭐⭐
+      │
+      ├─ 9️⃣ 创建 main goroutine
+      │   └─ runtime·newproc(runtime.main)
+      │
+      └─ 🔟 启动调度器
+          └─ runtime·mstart() → 永不返回！
+              └─ schedule() 循环
+                  ├─ findrunnable()  // 找可运行的 g
+                  ├─ execute(g)      // 执行 g
+                  └─ gogo()          // 切换到 g 的栈
+```
