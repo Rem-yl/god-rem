@@ -276,7 +276,7 @@ grep -n "compile.*-p runtime " build_log.log
       - contentID 验证缓存没有被篡改
       - 保证编译结果的正确性
 
-#### 链接阶段
+### 链接阶段
 
 1. 创建链接配置
 
@@ -331,6 +331,7 @@ grep -n "compile.*-p runtime " build_log.log
   ```bash
   nm main_bin | grep -E "(rt0|main\.|runtime\.main|schedinit)"
   ```
+
   启动相关的符号：
 
   ```text
@@ -341,9 +342,11 @@ grep -n "compile.*-p runtime " build_log.log
   0x434e60  T  runtime.main          ← Runtime main
   0x48f080  T  main.main             ← 用户 main
   ```
+
   ```bash
   nm main_bin | grep -E "runtime\.(g0|m0|allp)"
   ```
+
   全局变量相关符号：
 
   ```text
@@ -372,7 +375,7 @@ grep -n "compile.*-p runtime " build_log.log
 
 ## 2. 世界开始前的工作
 
-这一节我们讨论在用户代码执行前，Go语言的“世界初始化”操作，其中`runtime.main`的启动是用户`main`函数启动之前的关键。本节包含大量的汇编代码
+这一节我们讨论在用户代码执行前，Go语言的“世界初始化”操作，其中 `runtime.main`的启动是用户 `main`函数启动之前的关键。本节包含大量的汇编代码
 
 **世界开始前启动链路**
 
@@ -399,16 +402,18 @@ Linux Loader
 
 接下来可以使用两种方法来查看启动前的汇编代码，**反汇编可执行文件**和**查看go语言的源码**，我们来分别查看下
 
-### 反汇编`main_bin`
+### 反汇编 `main_bin`
 
-从上一章节我们知道了程序的入口地址是：0x46ce40  T  _rt0_amd64_linux，我们可以使用反汇编指令`objdump`来一步步查看代码的执行情况
+从上一章节我们知道了程序的入口地址是：0x46ce40  T  _rt0_amd64_linux，我们可以使用反汇编指令 `objdump`来一步步查看代码的执行情况
 
 #### _rt0_amd64_linux: 程序入口
+
 ```bash
 objdump -d main_bin --start-address=0x46ce40 --stop-address=0x46ce50 -M intel
 ```
 
 输出结果如下：
+
 ```asm
 main_bin:     file format elf64-x86-64
 
@@ -430,14 +435,16 @@ Disassembly of section .text:
   46ce4f:       cc                      int3   
 ```
 
-可以看到指令只有简单的一条jump，于是根据jump的地址我们可以继续使用`objdump`来追踪代码
+可以看到指令只有简单的一条jump，于是根据jump的地址我们可以继续使用 `objdump`来追踪代码
 
 #### _rt0_amd64: 设置参数
+
 ```bash
 objdump -d main_bin --start-address=0x469740 --stop-address=0x469750 -M intel
 ```
 
 输出如下：
+
 ```asm
 main_bin:     file format elf64-x86-64
 
@@ -453,11 +460,12 @@ Disassembly of section .text:
 ```
 
 这段汇编指令做了三件事：
-1. 从栈上读取`argc`到`rdi`寄存器
-2. 获取`argv`地址到`rsi`寄存器
-3. 跳转到`runtime.rt0_go`指令
 
-我们继续执行`objdump`
+1. 从栈上读取 `argc`到 `rdi`寄存器
+2. 获取 `argv`地址到 `rsi`寄存器
+3. 跳转到 `runtime.rt0_go`指令
+
+我们继续执行 `objdump`
 
 #### runtime.rt0_go: 核心初始化
 
@@ -466,6 +474,7 @@ objdump -d main_bin --start-address=0x469760 --stop-address=0x469890 -M intel
 ```
 
 关键部分输出：
+
 ```asm
 0000000000469760 <runtime.rt0_go.abi0>:
   ; 保存 argc 和 argv
@@ -518,9 +527,10 @@ objdump -d main_bin --start-address=0x469760 --stop-address=0x469890 -M intel
 我们的源码目录: /root/rem/go-master/src
 本小节的所有命令操作都是默认在此目录下进行的
 
-**Tips: 善用`grep -rn "pattern" path`和`sed -n 'line1,line2p' file`来查找源码**
+**Tips: 善用 `grep -rn "pattern" path`和 `sed -n 'line1,line2p' file`来查找源码**
 
-首先我们查看程序启动的汇编文件`rt0_linux_amd64`
+首先我们查看程序启动的汇编文件 `rt0_linux_amd64`
+
 ```bash
 find ./ -name "rt0_linux_amd64*" 
 
@@ -530,6 +540,7 @@ cat ./runtime/rt0_linux_amd64.s
 ```
 
 可以看到代码里有两个启动函数：
+
 ```asm
 #include "textflag.h"
 
@@ -540,7 +551,7 @@ TEXT _rt0_amd64_linux_lib(SB),NOSPLIT,$0
 	JMP     _rt0_amd64_lib(SB)
 ```
 
-根据我们之前反汇编得到信息，我们知道代码的启动函数是`_rt0_amd64_linux`，于是我们接着查找`_rt0_amd64(SB)`函数的定义
+根据我们之前反汇编得到信息，我们知道代码的启动函数是 `_rt0_amd64_linux`，于是我们接着查找 `_rt0_amd64(SB)`函数的定义
 
 ```bash
 grep -rn "TEXT _rt0_amd64(SB)" ./
@@ -552,6 +563,7 @@ sed -n '15,30p' ./runtime/asm_amd64.s
 ```
 
 得到汇编代码
+
 ```asm
 TEXT _rt0_amd64(SB),NOSPLIT,$-8
 	MOVQ    0(SP), DI       // argc
@@ -559,7 +571,8 @@ TEXT _rt0_amd64(SB),NOSPLIT,$-8
 	JMP     runtime·rt0_go(SB)
 ```
 
-同理，接着查看`runtime·rt0_go(SB)`代码定义，关于这个汇编函数的具体阅读这里就不放出来，下面简单介绍下这个函数的功能：
+同理，接着查看 `runtime·rt0_go(SB)`代码定义，关于这个汇编函数的具体阅读这里就不放出来，下面简单介绍下这个函数的功能：
+
 ```text
   runtime·rt0_go
       │
@@ -568,7 +581,7 @@ TEXT _rt0_amd64(SB),NOSPLIT,$-8
       │
       ├─ 2️⃣ 初始化 g0 栈⭐
       │   ├─ g0.stack.lo = SP - 64KB
-      │   ├─ g0.stack.hi = SP         
+      │   ├─ g0.stack.hi = SP       
       │   └─ g0.stackguard0/1 = SP - 64KB
       │
       ├─ 3️⃣ CPU 特性检测
@@ -606,3 +619,88 @@ TEXT _rt0_amd64(SB),NOSPLIT,$-8
                   ├─ execute(g)      // 执行 g
                   └─ gogo()          // 切换到 g 的栈
 ```
+
+关于 `runtime`的几个初始化函数都可以在源码包中找到
+
+```bash
+grep -rn "func check(" ./runtime
+```
+
+**runtime.check()**
+
+- 检查内部数据结构的大小和对齐
+- 确保编译器和运行期的一致性
+
+**runtime.args()**
+
+- 解析程序启动时的参数，提取出辅助向量auxv
+- 从操作系统获取运行时所需要的基础系统信息
+
+**runtime.osinit()**
+
+```go
+func osinit() {
+	numCPUStartup = getCPUCount() // 计算可用的CPU核心数
+	physHugePageSize = getHugePageSize()   // 获取系统的大页大小
+	vgetrandomInit()  // 初始化 vgetrandom, 用于 Go 运行时需要随机数的场景
+}
+```
+
+**runtime.schedinit()**
+调度器初始化的核心函数，后续详细分析
+
+**runtime.newproc()**
+函数功能：
+newproc 是 Go 编译器在遇到 go 语句时生成的调用目标函数。它负责创建一个新的 goroutine 并将其加入调度队列。
+
+主要步骤：
+
+- 获取当前 goroutine (gp)
+- 获取调用者的 PC (用于调试/追踪)
+- 切换到系统栈执行核心创建逻辑
+- 将新 goroutine 放入运行队列
+- 必要时唤醒一个空闲的 P
+
+```go
+// Create a new g running fn.
+// Put it on the queue of g's waiting to run.
+// The compiler turns a go statement into a call to this.
+func newproc(fn *funcval) {
+	gp := getg()
+	if goexperiment.RuntimeSecret && gp.secret > 0 {
+		panic("goroutine spawned while running in secret mode")
+	}
+
+	pc := sys.GetCallerPC()
+	systemstack(func() {
+		newg := newproc1(fn, gp, pc, false, waitReasonZero)
+
+		pp := getg().m.p.ptr()
+		runqput(pp, newg, true)
+
+		if mainStarted {
+			wakep()
+		}
+	})
+}
+```
+
+[ ] `newproc1`是真正创建goroutine的函数，后续我们要对这个函数进行详尽分析
+
+**runtime.mstart()**
+本质上是一段汇编代码，调用了 `runtime.mstart0()`，我们可以查看后者的go源码
+
+`mstart0()` 是新创建的 M (机器线程) 的 Go 语言入口点，在汇编函数 mstart 之后被调用。它负责初始化 M 的运行环境，最终进入调度循环。
+
+主要步骤
+
+- 获取当前g0
+- 初始化g0栈边界
+- 设置g0栈保护边界
+- 调用 `mstart1`进行核心初始化并进入调度循环
+
+[ ] `mstart1`是M核心初始化并进入调度循环的函数，后续我们要对这个函数进行详尽分析
+
+至此我们分析完了一段简单的go代码是如何经过**点火装配（编译）** 以及 **点火（汇编启动）** 的过程，下面让我们用一个简单的流程图来展示一下这个过程。
+
+![img](./img/all_line.svg)

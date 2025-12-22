@@ -1,0 +1,17 @@
+timeline
+    title Go 程序生命周期：从编译到运行的时间线
+    section 创建点火架(编译)
+        敲下编译命令 : go build -o main_bin main.go
+        依赖树分析 : 底层包 : 架构层包 : ⭐ runtime包 : 依赖的高层包 : main.go
+        两阶段编译 : 阶段A：生成符号表 (-gensymabis) : rt0_linux_amd64.s入口 : 阶段B：编译go代码 : go_asm.h包含go 常量和结构体字段偏移量 : 阶段C：汇编到目标文件
+        链接阶段 : 创建链接配置 importcfg.link : 链接所有包变成 一个可执行文件 : 设置最终的buildid
+    
+    section 点火(汇编运行)
+        发射入口 : _rt0_amd64_linux : jmp _rt0_amd64
+        _rt0_amd64 : 保存 argc, argv : jmp runtime·rt0_go
+        rt0_go : 保存argc, argv : ⭐ 初始化go栈 : CPU特性检测 : CGO初始化 : 连接g0和m0 : ⭐ runtime初始化 : 创建main goroutine : 启动调度器
+    
+    section 重要函数
+        runtime初始化 : check() : 检查内部数据结构大小 : args() : 解析程序启动的参数 : 获取基础系统信息 : osinit()  : ⭐ schedinit() : 调度器初始化的核心函数
+        runtime.newproc(main) : 获取当前goroutine : 获取调用者的PC : 切换到系统栈执行核心创建逻辑 : 将新goroutine放入运行队列 : 必要时唤醒一个空闲的P
+        启动调度器: runtime.mstart() : 启动 schedule()循环    
