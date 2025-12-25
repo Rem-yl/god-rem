@@ -581,7 +581,7 @@ TEXT _rt0_amd64(SB),NOSPLIT,$-8
       │
       ├─ 2️⃣ 初始化 g0 栈⭐
       │   ├─ g0.stack.lo = SP - 64KB
-      │   ├─ g0.stack.hi = SP       
+      │   ├─ g0.stack.hi = SP     
       │   └─ g0.stackguard0/1 = SP - 64KB
       │
       ├─ 3️⃣ CPU 特性检测
@@ -701,6 +701,15 @@ func newproc(fn *funcval) {
 
 [ ] `mstart1`是M核心初始化并进入调度循环的函数，后续我们要对这个函数进行详尽分析
 
+### 小结
+
 至此我们分析完了一段简单的go代码是如何经过**点火装配（编译）** 以及 **点火（汇编启动）** 的过程，下面让我们用一个简单的流程图来展示一下这个过程。
 
 ![img](./img/all_line.svg)
+
+**schedinit函数流程**
+
+![img](./img/schinit.svg)
+
+
+## 3. GMP模型分析
