@@ -709,7 +709,9 @@ func newproc(fn *funcval) {
 
 **schedinit函数流程**
 
+![img](./img/easy-schinit.svg)
 ![img](./img/schinit.svg)
 
 
 ## 3. GMP模型分析
+
