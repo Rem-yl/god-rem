@@ -72,3 +72,142 @@ func procresize(procs int32) *p {
 	_ = time.Now() // 占位，后续实现时会用到
 	return nil
 }
+
+// ============ Phase 2: P 的本地队列操作 ============
+
+// runqput 将 gp 放入 pp 的本地可运行队列
+// 如果队列满了，将一半的 G 放入全局队列
+// 参数 next 为 true 时，将 gp 放入 pp.runnext
+func runqput(pp *p, gp *g, next bool) {
+	if next {
+		// 优先放入 runnext
+		oldnext := pp.runnext
+		pp.runnext = gp
+		gp.status = _Grunnable
+
+		if oldnext == nil {
+			return
+		}
+		// runnext 被占用，将旧的 G 放入队列
+		gp = oldnext
+	}
+
+	// 尝试放入本地队列
+retry:
+	h := pp.runqhead
+	t := pp.runqtail
+
+	// 队列未满
+	if t-h < uint32(len(pp.runq)) {
+		pp.runq[t%uint32(len(pp.runq))] = gp
+		pp.runqtail = t + 1
+		gp.status = _Grunnable
+		return
+	}
+
+	// 队列满了，将一半放入全局队列
+	if runqputslow(pp, gp) {
+		return
+	}
+	// 全局队列操作失败，重试
+	goto retry
+}
+
+// runqputslow 将 pp 的本地队列的一半 G 和 gp 一起放入全局队列
+func runqputslow(pp *p, gp *g) bool {
+	var batch [len(pp.runq)/2 + 1]*g
+
+	// 获取本地队列的一半
+	h := pp.runqhead
+	t := pp.runqtail
+	n := t - h
+	n = n / 2
+
+	if n != uint32(len(pp.runq)/2) {
+		panic("runqputslow: queue size mismatch")
+	}
+
+	for i := uint32(0); i < n; i++ {
+		batch[i] = pp.runq[(h+i)%uint32(len(pp.runq))]
+	}
+	batch[n] = gp
+
+	// 更新队列头
+	pp.runqhead = h + n
+
+	// 放入全局队列
+	globrunqputbatch(batch[:n+1])
+	return true
+}
+
+// runqget 从 pp 的本地可运行队列获取一个 G
+// 如果 inheritTime 为 true，gp 应该继承当前时间片
+func runqget(pp *p) *g {
+	// 先检查 runnext
+	next := pp.runnext
+	if next != nil {
+		pp.runnext = nil
+		return next
+	}
+
+	// 从本地队列获取
+	h := pp.runqhead
+	t := pp.runqtail
+
+	if t == h {
+		return nil // 队列为空
+	}
+
+	gp := pp.runq[h%uint32(len(pp.runq))]
+	pp.runqhead = h + 1
+	return gp
+}
+
+// runqempty 检查 pp 的本地队列是否为空
+func runqempty(pp *p) bool {
+	return pp.runnext == nil && pp.runqhead == pp.runqtail
+}
+
+// ============ 全局队列操作（简化版）============
+
+// globrunqputbatch 将一批 G 放入全局队列
+func globrunqputbatch(batch []*g) {
+	for _, gp := range batch {
+		if gp != nil {
+			gp.status = _Grunnable
+			sched.runq = append(sched.runq, gp)
+		}
+	}
+}
+
+// globrunqput 将 gp 放入全局队列
+func globrunqput(gp *g) {
+	gp.status = _Grunnable
+	sched.runq = append(sched.runq, gp)
+}
+
+// globrunqget 从全局队列获取一个 G
+// 尝试从全局队列获取一批 G
+func globrunqget(pp *p, max int32) *g {
+	if len(sched.runq) == 0 {
+		return nil
+	}
+
+	// 获取一个 G
+	gp := sched.runq[0]
+	sched.runq = sched.runq[1:]
+
+	// 尝试获取更多 G 到本地队列（负载均衡）
+	n := int32(len(sched.runq))
+	if n > max {
+		n = max
+	}
+
+	for i := int32(0); i < n && len(sched.runq) > 0; i++ {
+		g1 := sched.runq[0]
+		sched.runq = sched.runq[1:]
+		runqput(pp, g1, false)
+	}
+
+	return gp
+}
