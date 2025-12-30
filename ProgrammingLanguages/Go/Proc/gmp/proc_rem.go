@@ -1,6 +1,7 @@
 package gmp
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"strconv"
@@ -15,6 +16,23 @@ func setg(g *g) {
 }
 
 func ExecuteG(g *g) {
+	// 检查 g 是否为 nil
+	if g == nil {
+		panic("ExecuteG: g is nil (调度器内部错误)")
+	}
+
+	// 检查 g 的状态是否可运行
+	if g.status != _Grunnable && g.status != _Gidle {
+		panic(fmt.Sprintf("ExecuteG: g(goid=%d) is not runnable (status=%d, expect _Grunnable or _Gidle)",
+			g.goid, g.status))
+	}
+
+	// 检查 g.fn 是否为 nil
+	if g.fn == nil {
+		panic(fmt.Sprintf("ExecuteG: g(goid=%d).fn is nil", g.goid))
+	}
+
+	// 执行 G 的函数
 	g.fn()
 	g.status = _Gdead
 }
@@ -191,6 +209,18 @@ func findrunnable() *g {
 // execute 开始执行 gp
 func execute(gp *g) {
 	mp := getg().m
+
+	// 检查 gp 是否为 nil
+	if gp == nil {
+		panic("execute: gp is nil (调度器内部错误)")
+	}
+
+	// 检查 gp 的状态
+	// 只有 _Grunnable 状态的 G 才能被执行
+	if gp.status != _Grunnable {
+		panic(fmt.Sprintf("execute: bad g status (goid=%d, status=%d, expect _Grunnable=%d)",
+			gp.goid, gp.status, _Grunnable))
+	}
 
 	// 设置状态
 	gp.status = _Grunning

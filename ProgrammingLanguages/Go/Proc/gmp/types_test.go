@@ -80,6 +80,7 @@ func TestExecuteG(t *testing.T) {
 	}
 
 	g := newG(task)
+	g.status = _Grunnable // 设置为可运行状态
 
 	ExecuteG(g)
 
@@ -90,6 +91,62 @@ func TestExecuteG(t *testing.T) {
 	if g.status != _Gdead {
 		t.Error("g not dead")
 	}
+}
+
+// 测试 ExecuteG 传入 nil
+func TestExecuteG_NilG(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("ExecuteG(nil) should panic")
+		}
+	}()
+
+	ExecuteG(nil) // 应该 panic
+}
+
+// 测试 ExecuteG 传入 nil 函数
+func TestExecuteG_NilFn(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("ExecuteG with nil fn should panic")
+		}
+	}()
+
+	g := &g{
+		goid:   1,
+		status: _Grunnable,
+		fn:     nil, // fn 为 nil
+	}
+
+	ExecuteG(g) // 应该 panic
+}
+
+// 测试 ExecuteG 传入错误状态的 G
+func TestExecuteG_BadStatus(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("ExecuteG with wrong status should panic")
+		}
+	}()
+
+	g := newG(func() {})
+	g.status = _Grunning // 设置为已运行状态
+
+	ExecuteG(g) // 应该 panic
+}
+
+// 测试 ExecuteG 传入已死亡的 G
+func TestExecuteG_DeadG(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("ExecuteG with dead G should panic")
+		}
+	}()
+
+	g := newG(func() {})
+	g.status = _Gdead // 设置为已死亡状态
+
+	ExecuteG(g) // 应该 panic
 }
 
 // Phase 1: 测试 getg() 和 setg()
