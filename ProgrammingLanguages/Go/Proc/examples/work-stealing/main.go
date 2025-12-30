@@ -7,28 +7,21 @@ import (
 )
 
 func main() {
-	// 设置多个 P 来展示工作窃取
 	os.Setenv("GOMAXPROCS", "2")
-
 	gmp.Init()
 
 	fmt.Println("=== 工作窃取示例（GOMAXPROCS=2）===\n")
 	fmt.Println("创建 10 个 Goroutine，观察它们如何在 2 个 P 之间调度...\n")
 
-	// 创建 10 个 Goroutine
 	for i := 1; i <= 10; i++ {
 		taskID := i
 		gmp.Go(func() {
-			// 模拟一些计算工作
 			result := taskID * taskID
 			fmt.Printf("Task %d: 计算完成, %d * %d = %d\n", taskID, taskID, taskID, result)
 		})
 	}
 
-	// 查看初始队列状态
 	fmt.Printf("创建后队列中的 G 数量: %d\n\n", gmp.GetGCount())
-
-	// 运行调度器
 	fmt.Println("开始调度...\n")
 	gmp.Run()
 
