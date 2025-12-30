@@ -160,7 +160,7 @@ func newproc(fn func()) {
 // 1. 本地队列
 // 2. 全局队列
 // 3. 网络轮询器（暂不实现）
-// 4. 工作窃取（Phase 5 实现）
+// 4. 工作窃取
 func findrunnable() *g {
 	mp := getg().m
 	pp := mp.p
@@ -176,6 +176,11 @@ func findrunnable() *g {
 
 	// 2. 从全局队列获取
 	if gp := globrunqget(pp, 1); gp != nil {
+		return gp
+	}
+
+	// 3. 尝试从其他 P 窃取
+	if gp := runqsteal(pp); gp != nil {
 		return gp
 	}
 
@@ -374,6 +379,71 @@ func globrunqget(pp *p, max int32) *g {
 	for i := int32(0); i < n && len(sched.runq) > 0; i++ {
 		g1 := sched.runq[0]
 		sched.runq = sched.runq[1:]
+		runqput(pp, g1, false)
+	}
+
+	return gp
+}
+
+// ============ Phase 5: 工作窃取 ============
+
+// runqsteal 尝试从其他 P 的运行队列窃取 G
+// 窃取一半的 G 到 pp 的本地队列
+func runqsteal(pp *p) *g {
+	// 遍历所有 P
+	for _, p2 := range sched.allp {
+		if p2 == pp {
+			continue // 跳过自己
+		}
+
+		// 尝试从 p2 窃取
+		if gp := runqstealFromP(pp, p2); gp != nil {
+			return gp
+		}
+	}
+
+	return nil
+}
+
+// runqstealFromP 从 p2 窃取一半的 G 到 pp
+// 返回第一个窃取到的 G
+func runqstealFromP(pp, p2 *p) *g {
+	h := p2.runqhead
+	t := p2.runqtail
+	n := t - h
+
+	if n == 0 {
+		return nil // p2 队列为空
+	}
+
+	// 窃取一半
+	n = n / 2
+	if n == 0 {
+		n = 1 // 至少窃取一个
+	}
+
+	// 获取第一个 G 作为返回值
+	var gp *g
+	var batch []*g
+
+	for i := uint32(0); i < n; i++ {
+		g1 := p2.runq[(h+i)%uint32(len(p2.runq))]
+		if g1 == nil {
+			continue
+		}
+
+		if gp == nil {
+			gp = g1 // 第一个 G 作为返回值
+		} else {
+			batch = append(batch, g1)
+		}
+	}
+
+	// 更新 p2 的队列头
+	p2.runqhead = h + n
+
+	// 将剩余的 G 放入 pp 的本地队列
+	for _, g1 := range batch {
 		runqput(pp, g1, false)
 	}
 
