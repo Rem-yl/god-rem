@@ -41,8 +41,19 @@ type m struct {
 	id       int64
 	p        *p
 	curg     *g
+	g0       *g
 	spinning bool
+	link     *m // 用于空闲 M 链表
 }
+
+// P 的状态
+const (
+	_Pidle uint32 = iota
+	_Prunning
+	_Psyscall
+	_Pgcstop
+	_Pdead
+)
 
 type p struct {
 	id       int64
@@ -52,6 +63,7 @@ type p struct {
 	runq     [256]*g // 每个p自己的运行队列
 	runnext  *g
 	m        *m
+	link     *p // 用于空闲 P 链表
 }
 
 type Schedt struct {

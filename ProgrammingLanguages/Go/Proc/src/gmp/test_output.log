@@ -1,0 +1,43 @@
+=== RUN   TestRunqPutGet
+--- PASS: TestRunqPutGet (0.00s)
+=== RUN   TestRunqRunnext
+--- PASS: TestRunqRunnext (0.00s)
+=== RUN   TestRunqFull
+    queue_test.go:153: 本地队列: 128, 全局队列: 129
+--- PASS: TestRunqFull (0.00s)
+=== RUN   TestGlobalQueue
+    queue_test.go:187: 本地队列数量: 2
+--- PASS: TestGlobalQueue (0.00s)
+=== RUN   TestRunqempty
+--- PASS: TestRunqempty (0.00s)
+=== RUN   TestProcresize
+--- PASS: TestProcresize (0.00s)
+=== RUN   TestNewproc
+--- PASS: TestNewproc (0.00s)
+=== RUN   TestScheduleBasic
+--- FAIL: TestScheduleBasic (0.00s)
+panic: runtime error: invalid memory address or nil pointer dereference [recovered]
+	panic: runtime error: invalid memory address or nil pointer dereference
+[signal SIGSEGV: segmentation violation code=0x2 addr=0x18 pc=0x10299044c]
+
+goroutine 11 [running]:
+testing.tRunner.func1.2({0x1029e1fa0, 0x102ad7b00})
+	/opt/homebrew/Cellar/go/1.23.0/libexec/src/testing/testing.go:1632 +0x1bc
+testing.tRunner.func1()
+	/opt/homebrew/Cellar/go/1.23.0/libexec/src/testing/testing.go:1635 +0x334
+panic({0x1029e1fa0?, 0x102ad7b00?})
+	/opt/homebrew/Cellar/go/1.23.0/libexec/src/runtime/panic.go:785 +0x124
+go-rem/gmp.goexit()
+	/Users/yule/Desktop/opera/2_code/god-rem/ProgrammingLanguages/Go/Proc/src/gmp/proc_rem.go:215 +0x2c
+go-rem/gmp.execute(0x10e?)
+	/Users/yule/Desktop/opera/2_code/god-rem/ProgrammingLanguages/Go/Proc/src/gmp/proc_rem.go:203 +0x90
+go-rem/gmp.schedule()
+	/Users/yule/Desktop/opera/2_code/god-rem/ProgrammingLanguages/Go/Proc/src/gmp/proc_rem.go:240 +0x34
+go-rem/gmp.TestScheduleBasic(0x140001051e0)
+	/Users/yule/Desktop/opera/2_code/god-rem/ProgrammingLanguages/Go/Proc/src/gmp/scheduler_test.go:103 +0x13c
+testing.tRunner(0x140001051e0, 0x102a03710)
+	/opt/homebrew/Cellar/go/1.23.0/libexec/src/testing/testing.go:1690 +0xe4
+created by testing.(*T).Run in goroutine 1
+	/opt/homebrew/Cellar/go/1.23.0/libexec/src/testing/testing.go:1743 +0x314
+exit status 2
+FAIL	go-rem/gmp	0.179s

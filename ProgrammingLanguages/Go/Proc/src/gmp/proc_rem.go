@@ -3,7 +3,6 @@ package gmp
 import (
 	"os"
 	"strconv"
-	"time"
 )
 
 func getg() *g {
@@ -19,7 +18,7 @@ func ExecuteG(g *g) {
 	g.status = _Gdead
 }
 
-// remtodo: g0, m0的初始化和绑定
+// initG0M0 初始化 g0 和 m0 的双向绑定
 func initG0M0() {
 	g0 = &g{
 		goid:   0,
@@ -29,11 +28,13 @@ func initG0M0() {
 
 	m0 = &m{
 		id:       0,
+		g0:       g0,
 		curg:     g0,
 		spinning: false,
 	}
 
 	g0.m = m0
+	g0.g0 = g0 // g0 的 g0 指向自己
 
 	setg(g0)
 }
@@ -67,10 +68,177 @@ func schedinit() {
 	}
 }
 
-func procresize(procs int32) *p {
-	// TODO: 实现 P 的创建和初始化
-	_ = time.Now() // 占位，后续实现时会用到
+// ============ Phase 3: 调度器核心逻辑 ============
+
+// procresize 调整 P 的数量
+// 返回一个有可运行 G 的 P（如果有的话）
+func procresize(nprocs int32) *p {
+	old := len(sched.allp)
+
+	// 创建新的 P
+	for i := int32(old); i < nprocs; i++ {
+		pp := &p{
+			id:     int64(i),
+			status: _Pidle,
+		}
+		sched.allp = append(sched.allp, pp)
+	}
+
+	// 分配 P 给 m0
+	mp := getg().m
+	if mp != nil {
+		if mp.p != nil && mp.p.id < int64(nprocs) {
+			// 继续使用当前的 P
+			mp.p.status = _Prunning
+		} else {
+			// 获取一个 P
+			if nprocs > 0 {
+				pp := sched.allp[0]
+				pp.status = _Prunning
+				mp.p = pp
+				pp.m = mp
+			}
+		}
+	}
+
+	// 将多余的 P 放入空闲列表
+	for i := nprocs; i < int32(len(sched.allp)); i++ {
+		pp := sched.allp[i]
+		if pp == nil {
+			continue
+		}
+		pp.status = _Pdead
+		// 将其本地队列的 G 转移到全局队列
+		for !runqempty(pp) {
+			gp := runqget(pp)
+			if gp != nil {
+				globrunqput(gp)
+			}
+		}
+	}
+
+	// 将空闲的 P 放入 pidle 链表
+	var pidle *p
+	var runningP int32 = 0
+	for i := int32(0); i < nprocs; i++ {
+		pp := sched.allp[i]
+		if mp != nil && mp.p == pp {
+			runningP = 1
+			continue
+		}
+		pp.status = _Pidle
+		pp.link = pidle
+		pidle = pp
+	}
+	sched.pidle = pidle
+	sched.npidle.Store(nprocs - runningP)
+
 	return nil
+}
+
+// newproc 创建一个新的 G 来运行 fn
+func newproc(fn func()) {
+	gp := newG(fn)
+	gp.status = _Grunnable
+
+	// 获取当前的 P
+	mp := getg().m
+	pp := mp.p
+
+	if pp == nil {
+		// 没有 P，放入全局队列
+		globrunqput(gp)
+	} else {
+		// 放入 P 的本地队列
+		// next=true 使用 runnext 优化
+		runqput(pp, gp, true)
+	}
+}
+
+// findrunnable 查找一个可运行的 G
+// 按照以下顺序查找：
+// 1. 本地队列
+// 2. 全局队列
+// 3. 网络轮询器（暂不实现）
+// 4. 工作窃取（Phase 5 实现）
+func findrunnable() *g {
+	mp := getg().m
+	pp := mp.p
+
+	if pp == nil {
+		return nil
+	}
+
+	// 1. 从本地队列获取
+	if gp := runqget(pp); gp != nil {
+		return gp
+	}
+
+	// 2. 从全局队列获取
+	if gp := globrunqget(pp, 1); gp != nil {
+		return gp
+	}
+
+	// 没有可运行的 G
+	return nil
+}
+
+// execute 开始执行 gp
+func execute(gp *g) {
+	mp := getg().m
+
+	// 设置状态
+	gp.status = _Grunning
+	gp.m = mp      // 设置 g.m 关联
+	mp.curg = gp
+
+	// 切换到 gp
+	setg(gp)
+
+	// 执行 G 的函数
+	if gp.fn != nil {
+		gp.fn()
+	}
+
+	// G 执行完毕，调用 goexit
+	goexit()
+}
+
+// goexit G 退出时的清理工作
+func goexit() {
+	gp := getg()
+	mp := gp.m
+
+	// 设置状态为 dead
+	gp.status = _Gdead
+
+	// 切换回 g0
+	setg(mp.g0)
+	mp.curg = nil
+
+	// 继续调度
+	schedule()
+}
+
+// schedule 调度循环
+// 找到一个可运行的 G 并执行它
+func schedule() {
+	mp := getg().m
+
+	if mp == nil {
+		panic("schedule: m is nil")
+	}
+
+	// 查找可运行的 G
+	gp := findrunnable()
+
+	if gp == nil {
+		// 没有可运行的 G
+		return
+	}
+
+	// 执行找到的 G
+	execute(gp)
 }
 
 // ============ Phase 2: P 的本地队列操作 ============
